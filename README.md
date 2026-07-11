@@ -42,7 +42,7 @@ Bot Telegram qui surveille les logements disponibles sur le site du CROUS et env
 
 ### 4. Installer les dépendances
 
-```bash
+```bash.
 cd Crous_alert
 python3 -m venv venv
 source venv/bin/activate
