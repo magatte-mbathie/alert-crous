@@ -2,9 +2,9 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY *.py .
+COPY src ./src
 
-CMD ["python", "main.py"]
+CMD ["python", "src/main.py"]
