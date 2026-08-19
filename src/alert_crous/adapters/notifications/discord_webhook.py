@@ -13,7 +13,7 @@ CROUS_SITE_URL = "https://trouverunlogement.lescrous.fr"
 
 class DiscordWebhookNotifier:
     def __init__(self, webhook_url: str) -> None:
-        self.webhook_url = webhook_url
+        self.webhook_url = self._normalize_webhook_url(webhook_url)
         self._message_ids_by_logement_id: dict[str, str] = {}
 
     def notify_new_logements(self, logements: list[Logement]) -> None:
@@ -97,6 +97,12 @@ class DiscordWebhookNotifier:
     def _message_delete_url(self, message_id: str) -> str:
         webhook_base = self.webhook_url.split("?", 1)[0].rstrip("/")
         return f"{webhook_base}/messages/{message_id}"
+
+    def _normalize_webhook_url(self, url: str) -> str:
+        cleaned = url.strip()
+        if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {'"', "'"}:
+            cleaned = cleaned[1:-1].strip()
+        return cleaned
 
     def _safe_json(self, response: requests.Response) -> dict[str, Any]:
         try:

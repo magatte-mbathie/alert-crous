@@ -45,3 +45,9 @@ def test_message_delete_url_is_built_from_webhook_url():
     delete_url = notifier._message_delete_url("999")
 
     assert delete_url == "https://discord.com/api/webhooks/123/abc/messages/999"
+
+
+def test_webhook_url_is_normalized_when_wrapped_in_quotes():
+    notifier = DiscordWebhookNotifier('"https://discord.com/api/webhooks/123/abc"')
+
+    assert notifier.webhook_url == "https://discord.com/api/webhooks/123/abc"
