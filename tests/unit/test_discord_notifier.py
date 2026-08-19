@@ -51,3 +51,9 @@ def test_webhook_url_is_normalized_when_wrapped_in_quotes():
     notifier = DiscordWebhookNotifier('"https://discord.com/api/webhooks/123/abc"')
 
     assert notifier.webhook_url == "https://discord.com/api/webhooks/123/abc"
+
+
+def test_webhook_url_is_normalized_when_only_one_quote_side_is_present():
+    notifier = DiscordWebhookNotifier('"https://discord.com/api/webhooks/123/abc')
+
+    assert notifier.webhook_url == "https://discord.com/api/webhooks/123/abc"

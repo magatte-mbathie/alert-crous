@@ -11,8 +11,7 @@ def _clean_env_value(value: str | None) -> str | None:
 		return None
 
 	cleaned = value.strip()
-	if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {'"', "'"}:
-		cleaned = cleaned[1:-1].strip()
+	cleaned = cleaned.strip('"').strip("'")
 
 	return cleaned or None
 

@@ -100,8 +100,7 @@ class DiscordWebhookNotifier:
 
     def _normalize_webhook_url(self, url: str) -> str:
         cleaned = url.strip()
-        if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {'"', "'"}:
-            cleaned = cleaned[1:-1].strip()
+        cleaned = cleaned.strip('"').strip("'")
         return cleaned
 
     def _safe_json(self, response: requests.Response) -> dict[str, Any]:
