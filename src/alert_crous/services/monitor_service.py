@@ -16,13 +16,19 @@ class MonitorService:
     def run_once(self, urls: list[str]) -> list[Logement]:
         logements = self.fetch_all(urls)
         known_ids = self.repository.get_known_ids()
+        current_ids = {logement.id for logement in logements}
         new_logements = detect_new_logements(logements, known_ids)
+        removed_ids = known_ids - current_ids
 
         if new_logements:
             LOGGER.info("%s nouveau(x) logement(s) détecté(s)", len(new_logements))
             self.notifier.notify_new_logements(new_logements)
 
-        self.repository.save_seen_ids({logement.id for logement in logements})
+        if removed_ids:
+            LOGGER.info("%s logement(s) indisponible(s), suppression Discord", len(removed_ids))
+            self.notifier.remove_unavailable_logements(removed_ids)
+
+        self.repository.save_seen_ids(current_ids)
         return new_logements
 
     def fetch_all(self, urls: list[str]) -> list[Logement]:

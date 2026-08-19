@@ -12,3 +12,4 @@ def test_detect_new_logements_returns_only_unknown_items():
 
     assert len(result) == 1
     assert result[0].id == "2"
+    assert isinstance(result[0].detected_at, int)

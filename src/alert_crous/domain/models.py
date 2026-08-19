@@ -12,3 +12,4 @@ class Logement:
     occupation: str = "N/A"
     logement_type: str = "N/A"
     image_url: str = ""
+    detected_at: int | None = None

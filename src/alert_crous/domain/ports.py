@@ -12,6 +12,9 @@ class Notifier(Protocol):
     def notify_new_logements(self, logements: list[Logement]) -> None:
         ...
 
+    def remove_unavailable_logements(self, logement_ids: set[str]) -> None:
+        ...
+
 
 class LogementRepository(Protocol):
     def get_known_ids(self) -> set[str]:
