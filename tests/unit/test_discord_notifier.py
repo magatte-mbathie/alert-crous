@@ -1,5 +1,5 @@
 from alert_crous.domain.models import Logement
-from alert_crous.adapters.notifications.discord_webhook import CROUS_SITE_URL, DiscordWebhookNotifier
+from alert_crous.adapters.notifications.discord_webhook import DiscordWebhookNotifier
 
 
 def test_with_wait_param_adds_flag():
@@ -28,15 +28,15 @@ def test_embed_contains_available_hour_field():
     assert available_field["value"] != "N/A"
 
 
-def test_embed_uses_crous_site_url_only():
+def test_embed_uses_logement_url():
     notifier = DiscordWebhookNotifier("https://discord.com/api/webhooks/1/2")
     logement = Logement(id="1", title="A", link="https://example.com")
 
     embed = notifier._build_embed(logement)
 
     link_field = next(field for field in embed["fields"] if field["name"] == "Lien")
-    assert embed["url"] == CROUS_SITE_URL
-    assert link_field["value"] == CROUS_SITE_URL
+    assert embed["url"] == logement.link
+    assert link_field["value"] == logement.link
 
 
 def test_message_delete_url_is_built_from_webhook_url():

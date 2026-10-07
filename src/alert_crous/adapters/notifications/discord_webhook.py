@@ -57,7 +57,7 @@ class DiscordWebhookNotifier:
     def _build_embed(self, logement: Logement) -> dict:
         embed = {
             "title": self._safe_text(logement.title, 256),
-            "url": CROUS_SITE_URL,
+            "url": logement.link,
             "color": DISCORD_COLOR,
             "fields": [
                 {"name": "Prix", "value": self._safe_text(logement.price, 1024), "inline": True},
@@ -66,7 +66,7 @@ class DiscordWebhookNotifier:
                 {"name": "Adresse", "value": self._safe_text(logement.address, 1024), "inline": False},
                 {"name": "Surface", "value": self._safe_text(logement.surface, 1024), "inline": True},
                 {"name": "Occupation", "value": self._safe_text(logement.occupation, 1024), "inline": True},
-                {"name": "Lien", "value": CROUS_SITE_URL, "inline": False},
+                {"name": "Lien", "value": logement.link, "inline": False},
             ],
         }
 

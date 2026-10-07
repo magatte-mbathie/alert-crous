@@ -36,8 +36,8 @@ alert-crous/
 ## Démarrage local
 
 1. Copier [.env.example](.env.example) vers [.env](.env) et renseigner les valeurs.
-2. Installer les dépendances avec `python -m pip install -r requirements.txt`.
-3. Lancer le projet avec `python main.py`.
+2. Installer les dépendances avec `python3 -m pip install -r requirements.txt`.
+3. Lancer le projet avec `python3 main.py`.
 
 ## Variables d'environnement
 
@@ -48,9 +48,19 @@ Variables utilisées aujourd'hui:
 ```env
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/TON_ID/TON_TOKEN
 CROUS_URL=https://trouverunlogement.lescrous.fr/tools/47/search?bounds=...
-CHECK_INTERVAL=300
+# Intervalle entre deux scans (secondes)
+CHECK_INTERVAL=5
 LOG_LEVEL=INFO
+NOTIFY_EXISTING_ON_STARTUP=false
 ```
+
+`NOTIFY_EXISTING_ON_STARTUP=true` permet d'envoyer au démarrage une notification
+pour les logements déjà disponibles. Par défaut, le premier scan initialise
+l'état connu sans envoyer de notification.
+
+Le site CROUS ne fournit pas de webhook d'actualisation. Les nouveaux logements
+sont donc détectés au prochain scan. `CHECK_INTERVAL=5` limite cette latence à
+environ cinq secondes au maximum, hors temps de réponse du site et de Discord.
 
 ## Tests
 
@@ -59,7 +69,7 @@ Les tests utilisent `pytest` et couvrent la détection des nouveaux logements, l
 Lancer les tests:
 
 ```bash
-python -m pytest tests/unit -q
+python3 -m pytest tests/unit -q
 ```
 
 ## Docker

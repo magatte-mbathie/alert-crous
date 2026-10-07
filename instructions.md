@@ -25,12 +25,16 @@ Tu peux garder les autres variables existantes :
 
 ```env
 CROUS_URL=https://trouverunlogement.lescrous.fr/tools/47/search?bounds=3.038331354660928_50.67241880971674_3.1800994453390725_50.58248679028326&locationName=Hellemmes-Lille+%2859260%29
-CHECK_INTERVAL=200
+# Intervalle entre deux scans (secondes)
+CHECK_INTERVAL=5
 ```
 
 ## 3. Vérifier
 
-Quand le script démarre, il doit envoyer un premier message de test dans Discord. Si rien n’arrive, vérifie :
+Le premier scan initialise l’état connu sans envoyer de message. Pour notifier
+les logements déjà disponibles au démarrage, définis
+`NOTIFY_EXISTING_ON_STARTUP=true`. Si aucune notification n’arrive ensuite,
+vérifie :
 
 1. que l’URL du webhook est complète,
 2. que le webhook pointe bien vers le bon salon,
