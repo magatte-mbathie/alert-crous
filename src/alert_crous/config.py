@@ -18,7 +18,7 @@ def _clean_env_value(value: str | None) -> str | None:
 
 
 DISCORD_WEBHOOK_URL = _clean_env_value(os.getenv("DISCORD_WEBHOOK_URL"))
-CROUS_URL = _clean_env_value(os.getenv("CROUS_URL")) or "https://trouverunlogement.lescrous.fr/tools/47/search"
+CROUS_URL = _clean_env_value(os.getenv("CROUS_URL")) or "https://trouverunlogement.lescrous.fr/tools/47/search?bounds=2.9849982015429077_50.780121396973215_3.248670076542908_50.55817291054383&locationName=Lille"
 CROUS_URLS_RAW = _clean_env_value(os.getenv("CROUS_URLS")) or ""
 
 
