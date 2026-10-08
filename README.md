@@ -51,16 +51,20 @@ CROUS_URL=https://trouverunlogement.lescrous.fr/tools/47/search?bounds=...
 # Intervalle entre deux scans (secondes)
 CHECK_INTERVAL=5
 LOG_LEVEL=INFO
-NOTIFY_EXISTING_ON_STARTUP=false
+NOTIFY_EXISTING_ON_STARTUP=true
 ```
 
 `NOTIFY_EXISTING_ON_STARTUP=true` permet d'envoyer au démarrage une notification
-pour les logements déjà disponibles. Par défaut, le premier scan initialise
-l'état connu sans envoyer de notification.
+pour les logements déjà disponibles. Cette option est activée par défaut afin
+de ne pas manquer les logements présents lors du premier scan. Désactivez-la
+avec `NOTIFY_EXISTING_ON_STARTUP=false` si vous ne souhaitez être alerté que
+pour les logements apparus après le démarrage.
 
 Le site CROUS ne fournit pas de webhook d'actualisation. Les nouveaux logements
 sont donc détectés au prochain scan. `CHECK_INTERVAL=5` limite cette latence à
 environ cinq secondes au maximum, hors temps de réponse du site et de Discord.
+Les notifications Discord ne sont pas supprimées lorsqu'un logement devient
+indisponible.
 
 ## Tests
 

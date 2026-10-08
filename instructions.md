@@ -31,14 +31,16 @@ CHECK_INTERVAL=5
 
 ## 3. Vérifier
 
-Le premier scan initialise l’état connu sans envoyer de message. Pour notifier
-les logements déjà disponibles au démarrage, définis
-`NOTIFY_EXISTING_ON_STARTUP=true`. Si aucune notification n’arrive ensuite,
-vérifie :
+Le premier scan envoie désormais une notification pour les logements déjà
+disponibles (`NOTIFY_EXISTING_ON_STARTUP=true` par défaut). Si aucune
+notification n’arrive, vérifie :
 
 1. que l’URL du webhook est complète,
 2. que le webhook pointe bien vers le bon salon,
 3. que le bot a été relancé après modification du `.env`.
+
+Les notifications envoyées restent conservées dans Discord même si le logement
+devient ensuite indisponible sur le site CROUS.
 
 ## Attention
 

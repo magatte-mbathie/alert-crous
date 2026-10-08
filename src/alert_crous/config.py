@@ -37,7 +37,7 @@ def _parse_check_interval(raw: str | None) -> int:
 CHECK_INTERVAL = _parse_check_interval(os.getenv("CHECK_INTERVAL"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 DATABASE_URL = _clean_env_value(os.getenv("DATABASE_URL"))
-NOTIFY_EXISTING_ON_STARTUP = os.getenv("NOTIFY_EXISTING_ON_STARTUP", "false").strip().lower() in {
+NOTIFY_EXISTING_ON_STARTUP = os.getenv("NOTIFY_EXISTING_ON_STARTUP", "true").strip().lower() in {
 	"1",
 	"true",
 	"yes",
