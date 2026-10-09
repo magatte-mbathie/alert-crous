@@ -39,10 +39,10 @@ def test_embed_uses_logement_url():
     assert link_field["value"] == logement.link
 
 
-def test_message_delete_url_is_built_from_webhook_url():
+def test_message_edit_url_is_built_from_webhook_url():
     notifier = DiscordWebhookNotifier("https://discord.com/api/webhooks/123/abc?wait=true")
 
-    delete_url = notifier._message_delete_url("999")
+    delete_url = notifier._message_edit_url("999")
 
     assert delete_url == "https://discord.com/api/webhooks/123/abc/messages/999"
 
@@ -51,6 +51,18 @@ def test_webhook_url_is_normalized_when_wrapped_in_quotes():
     notifier = DiscordWebhookNotifier('"https://discord.com/api/webhooks/123/abc"')
 
     assert notifier.webhook_url == "https://discord.com/api/webhooks/123/abc"
+
+
+def test_unavailable_payload_marks_housing_as_taken():
+    notifier = DiscordWebhookNotifier("https://discord.com/api/webhooks/1/2")
+
+    payload = notifier._build_unavailable_payload(
+        {"content": "🏠 Nouveau logement disponible !", "embeds": [{"title": "Studio"}]}
+    )
+
+    assert payload["content"] == "⛔ Ce logement est déjà pris et n'est plus disponible."
+    assert payload["embeds"][0]["color"] == 0xE74C3C
+    assert payload["embeds"][0]["footer"]["text"] == "⛔ Logement déjà pris"
 
 
 def test_webhook_url_is_normalized_when_only_one_quote_side_is_present():

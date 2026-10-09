@@ -42,6 +42,20 @@ notification n’arrive, vérifie :
 Les notifications envoyées restent conservées dans Discord même si le logement
 devient ensuite indisponible sur le site CROUS.
 
+Quand un logement n'est plus présent sur le site, son message est mis à jour
+avec la mention « ⛔ Logement déjà pris » au lieu d'être supprimé.
+
+## Rendre le salon silencieux
+
+Pour empêcher les membres d'envoyer des messages :
+
+1. Ouvre les paramètres du salon d'alertes, puis **Permissions**.
+2. Sur le rôle `@everyone`, refuse **Envoyer des messages**.
+3. Vérifie que le webhook garde **Voir le salon** et **Envoyer des messages**.
+4. Garde éventuellement **Envoyer des messages** pour les administrateurs.
+
+Le webhook peut publier même si le salon est en lecture seule pour les membres.
+
 ## Attention
 
 Ne partage pas l’URL du webhook publiquement. Elle permet d’envoyer des messages directement dans ton salon Discord.

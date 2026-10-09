@@ -25,10 +25,8 @@ class MonitorService:
             self.notifier.notify_new_logements(new_logements)
 
         if removed_ids:
-            LOGGER.info(
-                "%s logement(s) indisponible(s), conservation des notifications Discord",
-                len(removed_ids),
-            )
+            LOGGER.info("%s logement(s) désormais pris", len(removed_ids))
+            self.notifier.mark_unavailable_logements(removed_ids)
 
         self.repository.save_seen_ids(current_ids)
         return new_logements

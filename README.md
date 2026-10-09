@@ -63,8 +63,15 @@ pour les logements apparus après le démarrage.
 Le site CROUS ne fournit pas de webhook d'actualisation. Les nouveaux logements
 sont donc détectés au prochain scan. `CHECK_INTERVAL=5` limite cette latence à
 environ cinq secondes au maximum, hors temps de réponse du site et de Discord.
-Les notifications Discord ne sont pas supprimées lorsqu'un logement devient
-indisponible.
+Lorsqu'un logement disparaît du site, sa notification est conservée puis
+éditée en rouge avec la mention « déjà pris ». Cette mise à jour ne concerne
+que les messages envoyés depuis le dernier démarrage du programme.
+
+Pour que les membres ne puissent pas écrire dans le salon d'alertes, configure
+ses permissions Discord en lecture seule : refuse `Envoyer des messages` au
+ rôle `@everyone`, puis autorise cette permission uniquement au rôle
+ d'administration si nécessaire. Le webhook conserve ainsi le droit de publier
+ les alertes, sans donner aux membres la possibilité de répondre dans ce salon.
 
 ## Tests
 

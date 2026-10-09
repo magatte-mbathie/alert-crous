@@ -12,7 +12,7 @@ class Notifier(Protocol):
     def notify_new_logements(self, logements: list[Logement]) -> None:
         ...
 
-    def remove_unavailable_logements(self, logement_ids: set[str]) -> None:
+    def mark_unavailable_logements(self, logement_ids: set[str]) -> None:
         ...
 
 

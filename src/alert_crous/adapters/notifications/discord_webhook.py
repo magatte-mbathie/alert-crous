@@ -8,6 +8,7 @@ from ...domain.models import Logement
 
 LOGGER = logging.getLogger(__name__)
 DISCORD_COLOR = 0x2ECC71
+DISCORD_UNAVAILABLE_COLOR = 0xE74C3C
 CROUS_SITE_URL = "https://trouverunlogement.lescrous.fr"
 
 
@@ -15,6 +16,7 @@ class DiscordWebhookNotifier:
     def __init__(self, webhook_url: str) -> None:
         self.webhook_url = self._normalize_webhook_url(webhook_url)
         self._message_ids_by_logement_id: dict[str, str] = {}
+        self._payloads_by_logement_id: dict[str, dict[str, Any]] = {}
 
     def notify_new_logements(self, logements: list[Logement]) -> None:
         for logement in logements:
@@ -38,21 +40,31 @@ class DiscordWebhookNotifier:
             if message_id:
                 self._message_ids_by_logement_id[logement.id] = str(message_id)
 
-    def remove_unavailable_logements(self, logement_ids: set[str]) -> None:
+            self._payloads_by_logement_id[logement.id] = payload
+
+    def mark_unavailable_logements(self, logement_ids: set[str]) -> None:
         for logement_id in logement_ids:
-            message_id = self._message_ids_by_logement_id.pop(logement_id, None)
-            if not message_id:
+            message_id = self._message_ids_by_logement_id.get(logement_id)
+            payload = self._payloads_by_logement_id.get(logement_id)
+            if not message_id or not payload:
                 continue
 
-            delete_url = self._message_delete_url(message_id)
-            response = requests.delete(delete_url, timeout=10)
+            unavailable_payload = self._build_unavailable_payload(payload)
+            response = requests.patch(
+                self._message_edit_url(message_id),
+                json=unavailable_payload,
+                timeout=10,
+            )
             if response.status_code >= 400:
                 LOGGER.error(
-                    "Echec suppression Discord (%s) pour %s: %s",
+                    "Echec mise à jour Discord (%s) pour %s: %s",
                     response.status_code,
                     logement_id,
                     response.text[:500],
                 )
+                continue
+
+            self._payloads_by_logement_id[logement_id] = unavailable_payload
 
     def _build_embed(self, logement: Logement) -> dict:
         embed = {
@@ -94,9 +106,20 @@ class DiscordWebhookNotifier:
             return "N/A"
         return datetime.fromtimestamp(detected_at).strftime("%H:%M:%S")
 
-    def _message_delete_url(self, message_id: str) -> str:
+    def _message_edit_url(self, message_id: str) -> str:
         webhook_base = self.webhook_url.split("?", 1)[0].rstrip("/")
         return f"{webhook_base}/messages/{message_id}"
+
+    def _build_unavailable_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        embeds = [dict(embed) for embed in payload.get("embeds", [])]
+        for embed in embeds:
+            embed["color"] = DISCORD_UNAVAILABLE_COLOR
+            embed["footer"] = {"text": "⛔ Logement déjà pris"}
+
+        return {
+            "content": "⛔ Ce logement est déjà pris et n'est plus disponible.",
+            "embeds": embeds,
+        }
 
     def _normalize_webhook_url(self, url: str) -> str:
         cleaned = url.strip()
