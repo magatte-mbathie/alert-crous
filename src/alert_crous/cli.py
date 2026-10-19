@@ -3,21 +3,25 @@ import sys
 import time
 
 from .adapters.notifications.discord_webhook import DiscordWebhookNotifier
-from .adapters.persistence.memory_repository import InMemoryLogementRepository
+from .adapters.persistence.sqlite_repository import SqliteLogementRepository
 from .adapters.scraper.crous_scraper import fetch_logements
 from .config import (
     CHECK_INTERVAL,
     CROUS_URLS,
     DISCORD_WEBHOOK_URL,
     LOG_LEVEL,
+    MISS_THRESHOLD,
     NOTIFY_EXISTING_ON_STARTUP,
+    STATE_DB_PATH,
+    validate_crous_urls,
 )
+from .domain.models import Logement
 from .logging_config import configure_logging
 from .services.monitor_service import MonitorService
 
 
 class CrousScraperAdapter:
-    def fetch_logements(self, url: str):
+    def fetch_logements(self, url: str) -> list[Logement]:
         return fetch_logements(url)
 
 
@@ -29,30 +33,42 @@ def main() -> None:
         logger.error("DISCORD_WEBHOOK_URL doit être défini dans .env")
         sys.exit(1)
 
+    try:
+        validate_crous_urls(CROUS_URLS)
+    except ValueError as error:
+        logger.error("%s", error)
+        sys.exit(1)
+
     logger.info("Démarrage de Alert CROUS")
     logger.info("Nombre d'URLs surveillées: %s", len(CROUS_URLS))
     logger.info("Intervalle: %ss", CHECK_INTERVAL)
+    logger.info("Base d'état: %s", STATE_DB_PATH)
 
     scraper = CrousScraperAdapter()
     notifier = DiscordWebhookNotifier(DISCORD_WEBHOOK_URL)
-    repository = InMemoryLogementRepository()
-    service = MonitorService(scraper, notifier, repository)
+    repository = SqliteLogementRepository(STATE_DB_PATH)
+    service = MonitorService(
+        scraper,
+        notifier,
+        repository,
+        miss_threshold=MISS_THRESHOLD,
+    )
 
+    next_run = time.monotonic()
     try:
-        initial_logements = service.fetch_all(CROUS_URLS)
-        repository.save_seen_ids({logement.id for logement in initial_logements})
-        logger.info("Initialisation terminée avec %s logement(s)", len(initial_logements))
-        if NOTIFY_EXISTING_ON_STARTUP and initial_logements:
-            logger.info("Notification des logements déjà disponibles au démarrage")
-            notifier.notify_new_logements(initial_logements)
-    except Exception:
-        logger.exception("Erreur lors du premier scan")
+        while True:
+            try:
+                service.run_once(
+                    CROUS_URLS,
+                    notify_existing=NOTIFY_EXISTING_ON_STARTUP,
+                )
+            except Exception:
+                logger.exception("Erreur lors du scan")
 
-    while True:
-        try:
-            service.run_once(CROUS_URLS)
-            logger.info("Scan terminé avec succès")
-        except Exception:
-            logger.exception("Erreur lors du scan")
-
-        time.sleep(CHECK_INTERVAL)
+            next_run += CHECK_INTERVAL
+            now = time.monotonic()
+            if next_run <= now:
+                next_run = now + CHECK_INTERVAL
+            time.sleep(next_run - now)
+    except KeyboardInterrupt:
+        logger.info("Arrêt demandé")

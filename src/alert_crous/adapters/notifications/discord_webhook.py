@@ -1,6 +1,7 @@
 import logging
-from datetime import datetime
+import time
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import requests
 
@@ -9,62 +10,146 @@ from ...domain.models import Logement
 LOGGER = logging.getLogger(__name__)
 DISCORD_COLOR = 0x2ECC71
 DISCORD_UNAVAILABLE_COLOR = 0xE74C3C
-CROUS_SITE_URL = "https://trouverunlogement.lescrous.fr"
+MAX_ATTEMPTS = 3
+MAX_RETRY_AFTER_SECONDS = 300.0
 
 
 class DiscordWebhookNotifier:
     def __init__(self, webhook_url: str) -> None:
         self.webhook_url = self._normalize_webhook_url(webhook_url)
-        self._message_ids_by_logement_id: dict[str, str] = {}
-        self._payloads_by_logement_id: dict[str, dict[str, Any]] = {}
 
-    def notify_new_logements(self, logements: list[Logement]) -> None:
-        for logement in logements:
-            payload = {
-                "content": "🏠 Nouveau logement disponible !",
-                "embeds": [self._build_embed(logement)],
-            }
-            LOGGER.info("Envoi d'une notification Discord pour %s", logement.id)
-            response = requests.post(self._with_wait_param(self.webhook_url), json=payload, timeout=10)
-            if response.status_code >= 400:
-                LOGGER.error(
-                    "Discord refuse la notification (%s) pour %s: %s",
-                    response.status_code,
-                    logement.id,
-                    response.text[:500],
-                )
-                continue
+    def notify_logement(self, logement: Logement) -> str | None:
+        payload = {
+            "content": "🏠 Nouveau logement disponible !",
+            "embeds": [self._build_embed(logement)],
+        }
+        LOGGER.debug("Envoi d'une notification Discord pour %s", logement.id)
 
-            data = self._safe_json(response)
-            message_id = data.get("id") if isinstance(data, dict) else None
-            if message_id:
-                self._message_ids_by_logement_id[logement.id] = str(message_id)
+        response = self._request_with_retries(
+            "POST",
+            self._with_wait_param(self.webhook_url),
+            json=payload,
+        )
+        if response is None or response.status_code >= 400:
+            self._log_discord_error("notification", logement.id, response)
+            return None
 
-            self._payloads_by_logement_id[logement.id] = payload
+        data = self._safe_json(response)
+        message_id = data.get("id") if isinstance(data, dict) else None
+        if not message_id:
+            LOGGER.error("Discord n'a pas renvoyé d'identifiant de message pour %s", logement.id)
+            return None
 
-    def mark_unavailable_logements(self, logement_ids: set[str]) -> None:
-        for logement_id in logement_ids:
-            message_id = self._message_ids_by_logement_id.get(logement_id)
-            payload = self._payloads_by_logement_id.get(logement_id)
-            if not message_id or not payload:
-                continue
+        return str(message_id)
 
-            unavailable_payload = self._build_unavailable_payload(payload)
-            response = requests.patch(
-                self._message_edit_url(message_id),
-                json=unavailable_payload,
-                timeout=10,
+    def mark_unavailable(self, logement: Logement, message_id: str) -> bool:
+        payload = {
+            "content": "🏠 Nouveau logement disponible !",
+            "embeds": [self._build_embed(logement)],
+        }
+        unavailable_payload = self._build_unavailable_payload(payload)
+        response = self._request_with_retries(
+            "PATCH",
+            self._message_edit_url(message_id),
+            json=unavailable_payload,
+        )
+        if response is None:
+            self._log_discord_error("mise à jour", logement.id, response)
+            return False
+        if response.status_code == 404:
+            LOGGER.warning(
+                "Message Discord introuvable pour %s; logement considéré comme traité",
+                logement.id,
             )
-            if response.status_code >= 400:
-                LOGGER.error(
-                    "Echec mise à jour Discord (%s) pour %s: %s",
-                    response.status_code,
-                    logement_id,
-                    response.text[:500],
+            return True
+        if response.status_code >= 400:
+            self._log_discord_error("mise à jour", logement.id, response)
+            return False
+
+        return True
+
+    def _request_with_retries(
+        self,
+        method: str,
+        url: str,
+        **kwargs: Any,
+    ) -> requests.Response | None:
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            try:
+                response = requests.request(method, url, timeout=10, **kwargs)
+            except requests.RequestException as error:
+                if attempt >= MAX_ATTEMPTS:
+                    LOGGER.error("Échec Discord après %s tentatives: %s", MAX_ATTEMPTS, error)
+                    return None
+                backoff = 2 ** (attempt - 1)
+                LOGGER.warning(
+                    "Erreur réseau Discord (tentative %s/%s), nouvelle tentative dans %ss: %s",
+                    attempt,
+                    MAX_ATTEMPTS,
+                    backoff,
+                    error,
                 )
+                time.sleep(backoff)
                 continue
 
-            self._payloads_by_logement_id[logement_id] = unavailable_payload
+            if response.status_code == 429:
+                if attempt >= MAX_ATTEMPTS:
+                    return response
+                retry_after = self._retry_after(response)
+                LOGGER.warning(
+                    "Discord limite le débit (tentative %s/%s), pause de %.2fs",
+                    attempt,
+                    MAX_ATTEMPTS,
+                    retry_after,
+                )
+                time.sleep(retry_after)
+                continue
+
+            if 500 <= response.status_code < 600:
+                if attempt >= MAX_ATTEMPTS:
+                    return response
+                backoff = 2 ** (attempt - 1)
+                LOGGER.warning(
+                    "Erreur serveur Discord %s (tentative %s/%s), nouvelle tentative dans %ss",
+                    response.status_code,
+                    attempt,
+                    MAX_ATTEMPTS,
+                    backoff,
+                )
+                time.sleep(backoff)
+                continue
+
+            return response
+
+        return None
+
+    def _retry_after(self, response: requests.Response) -> float:
+        data = self._safe_json(response)
+        value = data.get("retry_after") if isinstance(data, dict) else None
+        if value is None:
+            value = response.headers.get("Retry-After")
+        try:
+            seconds = float(value)
+        except (TypeError, ValueError):
+            seconds = 1.0
+        return min(max(seconds, 0.1), MAX_RETRY_AFTER_SECONDS)
+
+    def _log_discord_error(
+        self,
+        action: str,
+        logement_id: str,
+        response: requests.Response | None,
+    ) -> None:
+        if response is None:
+            LOGGER.error("Échec de la %s Discord pour %s", action, logement_id)
+            return
+        LOGGER.error(
+            "Discord refuse la %s (%s) pour %s: %s",
+            action,
+            response.status_code,
+            logement_id,
+            getattr(response, "text", "")[:500],
+        )
 
     def _build_embed(self, logement: Logement) -> dict:
         embed = {
@@ -96,15 +181,21 @@ class DiscordWebhookNotifier:
         return text if len(text) <= max_length else text[: max_length - 1] + "…"
 
     def _with_wait_param(self, url: str) -> str:
-        if "wait=" in url:
-            return url
-        separator = "&" if "?" in url else "?"
-        return f"{url}{separator}wait=true"
+        parts = urlsplit(url)
+        query = [
+            (key, value)
+            for key, value in parse_qsl(parts.query, keep_blank_values=True)
+            if key != "wait"
+        ]
+        query.append(("wait", "true"))
+        return urlunsplit(
+            (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)
+        )
 
     def _available_time_text(self, detected_at: int | None) -> str:
         if not detected_at:
             return "N/A"
-        return datetime.fromtimestamp(detected_at).strftime("%H:%M:%S")
+        return f"<t:{detected_at}:t>"
 
     def _message_edit_url(self, message_id: str) -> str:
         webhook_base = self.webhook_url.split("?", 1)[0].rstrip("/")
@@ -128,6 +219,7 @@ class DiscordWebhookNotifier:
 
     def _safe_json(self, response: requests.Response) -> dict[str, Any]:
         try:
-            return response.json()
+            data = response.json()
         except ValueError:
             return {}
+        return data if isinstance(data, dict) else {}

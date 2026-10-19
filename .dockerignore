@@ -1,0 +1,24 @@
+# Contexte de build Docker
+.git
+.gitignore
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+tests
+data
+*.sqlite3
+*.sqlite3-*
+*.db
+.env
+.env.*
+!.env.example
+*.swp
+.opencode*
+opencode.json

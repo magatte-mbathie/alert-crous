@@ -4,19 +4,16 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    command: ["python", "main.py"]
-    depends_on:
-      - db
-
-  db:
-    image: postgres:17-alpine
-    restart: unless-stopped
     environment:
-      POSTGRES_DB: alert_crous
-      POSTGRES_USER: alert_crous
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD doit être défini dans .env}
+      STATE_DB_PATH: /home/appuser/data/alert_crous.sqlite3
+    command: ["python", "main.py"]
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - app_data:/home/appuser/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
-  postgres_data:
+  app_data:

@@ -1,6 +1,7 @@
 from typing import Protocol
 
 from .models import Logement
+from .state import RepositoryState
 
 
 class Scraper(Protocol):
@@ -9,16 +10,16 @@ class Scraper(Protocol):
 
 
 class Notifier(Protocol):
-    def notify_new_logements(self, logements: list[Logement]) -> None:
+    def notify_logement(self, logement: Logement) -> str | None:
         ...
 
-    def mark_unavailable_logements(self, logement_ids: set[str]) -> None:
+    def mark_unavailable(self, logement: Logement, message_id: str) -> bool:
         ...
 
 
 class LogementRepository(Protocol):
-    def get_known_ids(self) -> set[str]:
+    def load_state(self) -> RepositoryState:
         ...
 
-    def save_seen_ids(self, ids: set[str]) -> None:
+    def save_state(self, state: RepositoryState) -> None:
         ...

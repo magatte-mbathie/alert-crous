@@ -15,7 +15,7 @@ Ce projet envoie maintenant les alertes dans un salon Discord via un webhook.
 
 ## 2. Ajouter la variable dans `.env`
 
-Remplace les anciennes variables Telegram par cette ligne :
+Ajoute cette ligne :
 
 ```env
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/TON_ID/TON_TOKEN
@@ -31,19 +31,26 @@ CHECK_INTERVAL=5
 
 ## 3. Vérifier
 
-Le premier scan envoie désormais une notification pour les logements déjà
-disponibles (`NOTIFY_EXISTING_ON_STARTUP=true` par défaut). Si aucune
-notification n’arrive, vérifie :
+Au tout premier démarrage, si la base d’état est vide, le scan envoie une
+notification pour les logements déjà disponibles
+(`NOTIFY_EXISTING_ON_STARTUP=true` par défaut). Les démarrages suivants ne
+renotifient pas les logements déjà connus : l’état est conservé dans SQLite
+(`STATE_DB_PATH`, par défaut `data/alert_crous.sqlite3`).
+
+Si aucune notification n’arrive, vérifie :
 
 1. que l’URL du webhook est complète,
 2. que le webhook pointe bien vers le bon salon,
-3. que le bot a été relancé après modification du `.env`.
+3. que le bot a été relancé après modification du `.env`,
+4. que `CROUS_URL` ne contient pas encore la valeur d’exemple `bounds=...`.
 
 Les notifications envoyées restent conservées dans Discord même si le logement
 devient ensuite indisponible sur le site CROUS.
 
 Quand un logement n'est plus présent sur le site, son message est mis à jour
-avec la mention « ⛔ Logement déjà pris » au lieu d'être supprimé.
+avec la mention « ⛔ Logement déjà pris » au lieu d'être supprimé. Par défaut,
+il faut `MISS_THRESHOLD=2` scans consécutifs sans le logement pour éviter qu'une
+page vide ou une erreur passagère ne marque tout comme pris.
 
 ## Rendre le salon silencieux
 
