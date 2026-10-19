@@ -12,7 +12,10 @@ from ...domain.models import Logement
 
 LOGGER = logging.getLogger(__name__)
 BASE_URL = "https://trouverunlogement.lescrous.fr"
-TYPE_PATTERN = re.compile(r"\b(studio|chambre|t1bis|t1|t2|t3|appartement|colocation)\b", re.IGNORECASE)
+TYPE_PATTERN = re.compile(
+    r"\b(studio|chambre|t1bis|t[1-9]|appartement|colocation)\b",
+    re.IGNORECASE,
+)
 MAX_RETRIES = 3
 MAX_PAGES = 50
 REQUEST_TIMEOUT = 30
@@ -35,12 +38,15 @@ class SearchMetadata:
     page: int | None = None
     page_size: int | None = None
     tool_id: int | None = None
+    items_count: int | None = None
 
 
 def fetch_logements(url: str) -> list[Logement]:
     LOGGER.debug("Vérification de la page CROUS: %s", url)
     all_logements: list[Logement] = []
     seen_ids: set[str] = set()
+    seen_offsets: set[int] = set()
+    processed_items = 0
     total: int | None = None
 
     for page_number in range(1, MAX_PAGES + 1):
@@ -51,22 +57,38 @@ def fetch_logements(url: str) -> list[Logement]:
         if metadata.total is not None:
             total = metadata.total
 
+        if metadata.page is not None:
+            if metadata.page in seen_offsets:
+                raise CrousParseError(
+                    f"Pagination répétée pour {url}: décalage {metadata.page} déjà reçu"
+                )
+            seen_offsets.add(metadata.page)
+
+        page_items_count = (
+            metadata.items_count
+            if metadata.items_count is not None
+            else len(logements)
+        )
+        processed_items += page_items_count
+
         new_on_page = [logement for logement in logements if logement.id not in seen_ids]
         for logement in new_on_page:
             seen_ids.add(logement.id)
             all_logements.append(logement)
 
-        if not new_on_page:
-            if total is not None and len(all_logements) < total:
-                raise CrousParseError(
-                    f"Résultats incomplets pour {url}: {len(all_logements)}/{total} logements"
-                )
+        if total is not None and processed_items >= total:
             break
-
-        if total is not None and len(all_logements) >= total:
+        if page_items_count == 0:
+            break
+        if total is None and not new_on_page:
             break
     else:
         raise CrousParseError(f"Limite de {MAX_PAGES} pages atteinte pour {url}")
+
+    if total is not None and processed_items < total:
+        raise CrousParseError(
+            f"Résultats incomplets pour {url}: {processed_items}/{total} éléments traités"
+        )
 
     LOGGER.debug("%s logement(s) trouvé(s) pour %s", len(all_logements), url)
     return all_logements
@@ -99,18 +121,28 @@ def parse_search_page(
         total = (
             total_data.get("value") if isinstance(total_data, dict) else total_data
         )
+        items = results.get("items")
         metadata = SearchMetadata(
             total=_as_int(total),
             page=_as_int(results.get("page")),
             page_size=_as_int(results.get("pageSize")),
             tool_id=resolved_tool_id,
+            items_count=len(items) if isinstance(items, list) else None,
         )
         return _parse_json_items(results, resolved_tool_id), metadata
 
     if not _looks_like_search_page(html):
         raise CrousParseError("La page CROUS ne contient ni résultats JSON ni cartes de logement")
 
-    return _parse_html_logements(html), SearchMetadata(tool_id=_tool_id_from_url(url))
+    logements = _parse_html_logements(html)
+    if not logements:
+        raise CrousParseError(
+            "La page CROUS ressemble à une recherche mais aucun logement n'a pu être extrait"
+        )
+    return logements, SearchMetadata(
+        tool_id=_tool_id_from_url(url),
+        items_count=len(logements),
+    )
 
 
 def _fetch_html(url: str) -> str:
@@ -180,7 +212,14 @@ def _parse_json_items(results: dict, tool_id: int | None) -> list[Logement]:
     for item in items:
         if not isinstance(item, dict) or item.get("id") is None:
             continue
-        if item.get("available") is False:
+        available = item.get("available")
+        if available is False or available == 0:
+            continue
+        if isinstance(available, str) and available.strip().lower() in {
+            "false",
+            "0",
+            "non",
+        }:
             continue
 
         residence = item.get("residence")
@@ -218,7 +257,7 @@ def _parse_html_logements(html: str) -> list[Logement]:
         if not link_tag:
             continue
 
-        href = link_tag.get("href", "")
+        href = link_tag.get("href") or ""
         logement_id = href.split("/accommodations/")[-1].split("?")[0].strip("/")
         if not logement_id:
             continue
@@ -239,7 +278,7 @@ def _parse_html_logements(html: str) -> list[Logement]:
         image_tag = card.select_one(".fr-card__img img.fr-responsive-img")
         image_url = ""
         if image_tag:
-            image_url = _normalize_url(image_tag.get("src", "").strip())
+            image_url = _normalize_url((image_tag.get("src") or "").strip())
 
         logements.append(
             Logement(
@@ -283,7 +322,12 @@ def _extract_occupation(details: list, surface: str) -> str:
 def _looks_like_search_page(html: str) -> bool:
     return any(
         marker in html
-        for marker in ("fr-card", "SearchResults", "logements trouvés", "Aucun logement")
+        for marker in (
+            '<div class="fr-card',
+            "SearchResults",
+            "logements trouvés",
+            "Aucun logement",
+        )
     )
 
 
@@ -357,15 +401,20 @@ def _json_image_url(item: dict, residence: dict) -> str:
     if not isinstance(medias, list) or not medias:
         return ""
 
-    media = medias[0]
-    src = media.get("src") if isinstance(media, dict) else None
+    src = ""
+    for media in medias:
+        candidate = media.get("src") if isinstance(media, dict) else None
+        if isinstance(candidate, str) and candidate:
+            src = candidate
+            break
     if not src:
         return ""
     if src.startswith(("http://", "https://")):
         return _normalize_url(src)
-    return _normalize_url(
-        urljoin(BASE_URL + "/", f"media/cache/resolve/preview/{src.lstrip('/')}")
-    )
+    path = src.lstrip("/")
+    if not path.startswith("media/"):
+        path = f"media/cache/resolve/preview/{path}"
+    return _normalize_url(urljoin(BASE_URL + "/", path))
 
 
 def _normalize_url(url: str) -> str:

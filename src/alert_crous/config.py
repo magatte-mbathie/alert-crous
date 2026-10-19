@@ -33,8 +33,15 @@ def _parse_check_interval(raw: str | None) -> int:
     return _parse_positive_int(raw, "CHECK_INTERVAL", 5)
 
 
+DEFAULT_CROUS_URL = (
+    "https://trouverunlogement.lescrous.fr/tools/47/search"
+    "?bounds=2.9849982015429077_50.780121396973215"
+    "_3.248670076542908_50.55817291054383"
+    "&locationName=Lille"
+)
+
 DISCORD_WEBHOOK_URL = _clean_env_value(os.getenv("DISCORD_WEBHOOK_URL"))
-CROUS_URL = _clean_env_value(os.getenv("CROUS_URL")) or "https://trouverunlogement.lescrous.fr/tools/47/search?bounds=2.9849982015429077_50.780121396973215_3.248670076542908_50.55817291054383&locationName=Lille"
+CROUS_URL = _clean_env_value(os.getenv("CROUS_URL")) or DEFAULT_CROUS_URL
 CROUS_URLS_RAW = _clean_env_value(os.getenv("CROUS_URLS")) or ""
 
 CHECK_INTERVAL = _parse_check_interval(os.getenv("CHECK_INTERVAL"))
@@ -59,11 +66,23 @@ def _parse_crous_urls(raw: str) -> list[str]:
 CROUS_URLS = _parse_crous_urls(CROUS_URLS_RAW) or [CROUS_URL]
 
 
+def validate_discord_webhook_url(url: str | None) -> None:
+    if not url:
+        raise ValueError("DISCORD_WEBHOOK_URL doit être défini dans .env")
+    if "TON_" in url:
+        raise ValueError(
+            "DISCORD_WEBHOOK_URL contient encore la valeur d'exemple. "
+            "Renseignez l'URL réelle du webhook Discord."
+        )
+    if not url.startswith("https://"):
+        raise ValueError("DISCORD_WEBHOOK_URL doit être une URL HTTPS")
+
+
 def validate_crous_urls(urls: list[str]) -> None:
     for url in urls:
         if "..." in url or "TON_" in url:
             raise ValueError(
-                "CROUS_URL contient encore une valeur d'exemple. "
+                "Une URL CROUS contient encore une valeur d'exemple. "
                 "Renseignez une URL de recherche CROUS valide dans .env."
             )
         if not url.startswith(("http://", "https://")):

@@ -4,6 +4,7 @@ from alert_crous.config import (
     _parse_check_interval,
     _parse_positive_int,
     validate_crous_urls,
+    validate_discord_webhook_url,
 )
 
 
@@ -47,3 +48,24 @@ def test_validate_crous_urls_accepts_real_url():
     validate_crous_urls(
         ["https://trouverunlogement.lescrous.fr/tools/47/search?bounds=1_2_3_4"]
     )
+
+
+def test_validate_discord_webhook_url_requires_a_value():
+    with pytest.raises(ValueError, match="doit être défini"):
+        validate_discord_webhook_url(None)
+
+
+def test_validate_discord_webhook_url_rejects_the_example():
+    with pytest.raises(ValueError, match="valeur d'exemple"):
+        validate_discord_webhook_url(
+            "https://discord.com/api/webhooks/TON_ID/TON_TOKEN"
+        )
+
+
+def test_validate_discord_webhook_url_requires_https():
+    with pytest.raises(ValueError, match="HTTPS"):
+        validate_discord_webhook_url("http://discord.com/api/webhooks/1/2")
+
+
+def test_validate_discord_webhook_url_accepts_a_real_url():
+    validate_discord_webhook_url("https://discord.com/api/webhooks/123/abc")

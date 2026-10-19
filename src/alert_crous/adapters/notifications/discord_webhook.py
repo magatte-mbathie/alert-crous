@@ -148,7 +148,7 @@ class DiscordWebhookNotifier:
             action,
             response.status_code,
             logement_id,
-            getattr(response, "text", "")[:500],
+            (getattr(response, "text", "") or "")[:500],
         )
 
     def _build_embed(self, logement: Logement) -> dict:
@@ -157,13 +157,17 @@ class DiscordWebhookNotifier:
             "url": logement.link,
             "color": DISCORD_COLOR,
             "fields": [
-                {"name": "Prix", "value": self._safe_text(logement.price, 1024), "inline": True},
-                {"name": "Type de logement", "value": self._safe_text(logement.logement_type, 1024), "inline": True},
-                {"name": "Heure disponible", "value": self._available_time_text(logement.detected_at), "inline": True},
-                {"name": "Adresse", "value": self._safe_text(logement.address, 1024), "inline": False},
-                {"name": "Surface", "value": self._safe_text(logement.surface, 1024), "inline": True},
-                {"name": "Occupation", "value": self._safe_text(logement.occupation, 1024), "inline": True},
-                {"name": "Lien", "value": logement.link, "inline": False},
+                self._field("Prix", logement.price, inline=True),
+                self._field("Type de logement", logement.logement_type, inline=True),
+                self._field(
+                    "Heure disponible",
+                    self._available_time_text(logement.detected_at),
+                    inline=True,
+                ),
+                self._field("Adresse", logement.address, inline=False),
+                self._field("Surface", logement.surface, inline=True),
+                self._field("Occupation", logement.occupation, inline=True),
+                self._field("Lien", logement.link, inline=False),
             ],
         }
 
@@ -171,6 +175,13 @@ class DiscordWebhookNotifier:
             embed["image"] = {"url": logement.image_url}
 
         return embed
+
+    def _field(self, name: str, value: str, inline: bool) -> dict:
+        return {
+            "name": name,
+            "value": self._safe_text(value, 1024),
+            "inline": inline,
+        }
 
     def _safe_text(self, value: str, max_length: int) -> str:
         if not value:

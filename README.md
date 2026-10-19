@@ -114,7 +114,7 @@ Le volume n'est pas supprimé par `docker compose down`. Utiliser `docker compos
 
 ## Dépannage
 
-- **Aucune alerte** : vérifier `DISCORD_WEBHOOK_URL`, que le webhook pointe vers le bon salon, et que `CROUS_URL` n'est pas restée sur la valeur d'exemple.
+- **Aucune alerte** : vérifier que `DISCORD_WEBHOOK_URL` n'est pas restée sur la valeur d'exemple et pointe vers le bon salon, puis vérifier `CROUS_URL`.
 - **Tous les logements passent en « déjà pris »** : vérifier que la recherche CROUS renvoie bien des résultats et que le `tool_id` correspond à l'année en cours. Une page invalide est ignorée et ne met pas à jour l'état.
 - **Discord limite le débit** : le programme attend automatiquement le délai indiqué par Discord (`retry_after`) puis réessaie.
 - **Repartir de zéro** : supprimer le fichier `STATE_DB_PATH` ou le volume Docker `app_data`.

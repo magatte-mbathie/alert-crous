@@ -14,6 +14,7 @@ from .config import (
     NOTIFY_EXISTING_ON_STARTUP,
     STATE_DB_PATH,
     validate_crous_urls,
+    validate_discord_webhook_url,
 )
 from .domain.models import Logement
 from .logging_config import configure_logging
@@ -29,11 +30,8 @@ def main() -> None:
     configure_logging(LOG_LEVEL)
     logger = logging.getLogger(__name__)
 
-    if not DISCORD_WEBHOOK_URL:
-        logger.error("DISCORD_WEBHOOK_URL doit être défini dans .env")
-        sys.exit(1)
-
     try:
+        validate_discord_webhook_url(DISCORD_WEBHOOK_URL)
         validate_crous_urls(CROUS_URLS)
     except ValueError as error:
         logger.error("%s", error)

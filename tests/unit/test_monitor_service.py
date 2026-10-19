@@ -38,6 +38,14 @@ class FakeNotifier:
         return True
 
 
+class ExplodingNotifier(FakeNotifier):
+    def notify_logement(self, logement: Logement) -> str | None:
+        raise RuntimeError("erreur inattendue")
+
+    def mark_unavailable(self, logement: Logement, message_id: str) -> bool:
+        raise RuntimeError("erreur inattendue")
+
+
 class FakeRepository:
     def __init__(self, state: RepositoryState | None = None) -> None:
         self.state = deepcopy(state) if state is not None else RepositoryState()
@@ -307,3 +315,56 @@ def test_pending_notification_is_retried_after_restart(tmp_path):
     second_service.run_once(["u"])
 
     assert second_notifier.sent == ["a"]
+
+
+def test_unexpected_notifier_exception_is_treated_as_pending():
+    scraper = FakeScraper({"u": [logement("a")]})
+    notifier = ExplodingNotifier()
+    repository = FakeRepository()
+    service = MonitorService(scraper, notifier, repository)
+
+    service.run_once(["u"])
+
+    assert repository.state.logements["a"].notification_status == "pending"
+    assert repository.state.logements["a"].available is True
+
+    retry_notifier = FakeNotifier()
+    retry_service = MonitorService(scraper, retry_notifier, repository)
+    retry_service.run_once(["u"])
+
+    assert retry_notifier.sent == ["a"]
+
+
+def test_unexpected_mark_unavailable_exception_is_retried():
+    scraper = FakeScraper({"u": [logement("a")]})
+    repository = FakeRepository()
+    first_service = MonitorService(
+        scraper,
+        FakeNotifier(),
+        repository,
+        miss_threshold=1,
+    )
+    first_service.run_once(["u"])
+
+    scraper.results["u"] = []
+    exploding_service = MonitorService(
+        scraper,
+        ExplodingNotifier(),
+        repository,
+        miss_threshold=1,
+    )
+    exploding_service.run_once(["u"])
+
+    assert repository.state.logements["a"].available is True
+
+    retry_notifier = FakeNotifier()
+    retry_service = MonitorService(
+        scraper,
+        retry_notifier,
+        repository,
+        miss_threshold=1,
+    )
+    retry_service.run_once(["u"])
+
+    assert retry_notifier.unavailable == [("a", "msg-a")]
+    assert repository.state.logements["a"].available is False

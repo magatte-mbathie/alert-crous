@@ -212,3 +212,54 @@ def test_parse_search_page_encodes_media_urls_with_spaces():
     logements, _ = crous_scraper.parse_search_page(html)
 
     assert logements[0].image_url.endswith("/media/cache/resolve/preview/1/photo%20avec%20espace.jpg")
+
+
+def test_fetch_logements_paginates_when_a_page_contains_unavailable_items(monkeypatch):
+    def fake_fetch(url):
+        page = int(parse_qs(urlsplit(url).query)["page"][0])
+        if page == 1:
+            return json_page(
+                [json_item(1), json_item(2, available=False)],
+                total=3,
+                page=0,
+                page_size=2,
+            )
+        return json_page([json_item(3)], total=3, page=2, page_size=2)
+
+    monkeypatch.setattr(crous_scraper, "_fetch_html", fake_fetch)
+
+    logements = crous_scraper.fetch_logements(
+        "https://trouverunlogement.lescrous.fr/tools/47/search"
+    )
+
+    assert [logement.id for logement in logements] == ["1", "3"]
+
+
+def test_fetch_logements_rejects_repeated_pagination(monkeypatch):
+    def fake_fetch(url):
+        return json_page(
+            [json_item(1), json_item(2)],
+            total=3,
+            page=0,
+            page_size=2,
+        )
+
+    monkeypatch.setattr(crous_scraper, "_fetch_html", fake_fetch)
+
+    with pytest.raises(CrousParseError, match="Pagination répétée"):
+        crous_scraper.fetch_logements(
+            "https://trouverunlogement.lescrous.fr/tools/47/search"
+        )
+
+
+def test_fetch_logements_rejects_a_search_page_without_parseable_cards(monkeypatch):
+    monkeypatch.setattr(
+        crous_scraper,
+        "_fetch_html",
+        lambda url: '<html><div class="fr-card">structure inconnue</div></html>',
+    )
+
+    with pytest.raises(CrousParseError, match="aucun logement"):
+        crous_scraper.fetch_logements(
+            "https://trouverunlogement.lescrous.fr/tools/47/search"
+        )
