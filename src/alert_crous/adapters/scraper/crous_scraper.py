@@ -12,6 +12,13 @@ import requests
 from bs4 import BeautifulSoup
 
 from ...domain.models import Logement
+from ...http_errors import (
+    format_request_error,
+    is_connectivity_error,
+    is_retryable_request_error,
+    short_error,
+    url_label,
+)
 
 LOGGER = logging.getLogger(__name__)
 BASE_URL = "https://trouverunlogement.lescrous.fr"
@@ -49,6 +56,10 @@ class CrousParseError(RuntimeError):
     """La page CROUS ne correspond plus au format attendu."""
 
 
+class CrousFetchError(RuntimeError):
+    """Le site CROUS n'a pas pu être contacté."""
+
+
 @dataclass(frozen=True)
 class SearchMetadata:
     total: int | None = None
@@ -63,11 +74,24 @@ def fetch_logements(url: str, use_api: bool = True) -> list[Logement]:
     if use_api:
         try:
             return _fetch_logements_via_api(url)
+        except CrousFetchError:
+            raise
+        except requests.RequestException as error:
+            reason = format_request_error(error)
+            if is_connectivity_error(error):
+                # Inutile de retenter en HTML : les deux endpoints sont sur le
+                # même hôte. On évite ainsi une salve de requêtes et de logs.
+                raise CrousFetchError(reason) from error
+            LOGGER.debug(
+                "API JSON CROUS indisponible pour %s (%s), retour au HTML",
+                url_label(url),
+                reason,
+            )
         except Exception as error:
-            LOGGER.warning(
-                "API JSON CROUS indisponible pour %s, retour au HTML: %s",
-                url,
-                error,
+            LOGGER.debug(
+                "API JSON CROUS inexploitable pour %s (%s), retour au HTML",
+                url_label(url),
+                short_error(error),
             )
 
     return _fetch_logements_via_html(url)
@@ -420,22 +444,25 @@ def _fetch_html(url: str) -> str:
             return response.text
         except requests.RequestException as error:
             last_error = error
-            if attempt < MAX_RETRIES:
-                sleep_seconds = attempt * 2
-                LOGGER.warning(
-                    "Erreur HTTP au scan (tentative %s/%s), nouvelle tentative dans %ss: %s",
-                    attempt,
-                    MAX_RETRIES,
-                    sleep_seconds,
-                    error,
-                )
-                time.sleep(sleep_seconds)
-            else:
-                LOGGER.error("Échec du scan après %s tentatives: %s", MAX_RETRIES, error)
+            reason = format_request_error(error)
+            if attempt >= MAX_RETRIES or not is_retryable_request_error(error):
+                break
 
-    if last_error:
-        raise last_error
-    raise CrousParseError(f"Impossible de récupérer {url}")
+            sleep_seconds = attempt * 2
+            LOGGER.debug(
+                "CROUS indisponible pour %s (tentative %s/%s): %s; "
+                "nouvelle tentative dans %ss",
+                url_label(url),
+                attempt,
+                MAX_RETRIES,
+                reason,
+                sleep_seconds,
+            )
+            time.sleep(sleep_seconds)
+
+    if last_error is not None:
+        raise CrousFetchError(format_request_error(last_error)) from last_error
+    raise CrousFetchError("réponse CROUS indisponible")
 
 
 def _with_page(url: str, page_number: int) -> str:

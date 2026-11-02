@@ -6,6 +6,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import requests
 
 from ...domain.models import Logement
+from ...http_errors import format_request_error
 
 LOGGER = logging.getLogger(__name__)
 DISCORD_COLOR = 0x2ECC71
@@ -78,8 +79,13 @@ class DiscordWebhookNotifier:
             try:
                 response = requests.request(method, url, timeout=10, **kwargs)
             except requests.RequestException as error:
+                reason = format_request_error(error)
                 if attempt >= MAX_ATTEMPTS:
-                    LOGGER.error("Échec Discord après %s tentatives: %s", MAX_ATTEMPTS, error)
+                    LOGGER.error(
+                        "Échec Discord après %s tentatives: %s",
+                        MAX_ATTEMPTS,
+                        reason,
+                    )
                     return None
                 backoff = 2 ** (attempt - 1)
                 LOGGER.warning(
@@ -87,7 +93,7 @@ class DiscordWebhookNotifier:
                     attempt,
                     MAX_ATTEMPTS,
                     backoff,
-                    error,
+                    reason,
                 )
                 time.sleep(backoff)
                 continue

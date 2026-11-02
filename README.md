@@ -28,6 +28,7 @@ alert-crous/
 │   └── alert_crous/
 │       ├── cli.py
 │       ├── config.py
+│       ├── http_errors.py
 │       ├── logging_config.py
 │       ├── domain/
 │       │   ├── models.py
@@ -83,7 +84,7 @@ NOTIFY_EXISTING_ON_STARTUP=true
 
 Le site CROUS ne fournit pas de webhook d'actualisation. Les nouveaux logements sont détectés au prochain scan. Toutes les pages de résultats sont parcourues, pas seulement la première.
 
-Pour accélérer la détection, le scraper interroge d'abord l'API JSON interne du site (`POST /api/fr/search/{tool_id}`), avec une pagination plus grande et les pages restantes récupérées en parallèle. Si cette API change ou échoue, il retombe automatiquement sur le parsing HTML classique. Les différentes villes sont également scannées en parallèle.
+Pour accélérer la détection, le scraper interroge d'abord l'API JSON interne du site (`POST /api/fr/search/{tool_id}`), avec une pagination plus grande et les pages restantes récupérées en parallèle. Si cette API change ou renvoie une erreur exploitable, il retombe automatiquement sur le parsing HTML classique. En cas de panne réseau globale (connexion refusée, DNS, délai dépassé), le scan s'arrête immédiatement pour cette URL : inutile de réinterroger le même hôte en HTML. Les différentes villes sont également scannées en parallèle.
 
 Le `tool_id` (`47` ici) dépend de l'année universitaire et doit être mis à jour à chaque nouvelle campagne. Pensez aussi à vérifier que les `bounds` correspondent toujours à la ville recherchée.
 
@@ -129,6 +130,7 @@ Le volume n'est pas supprimé par `docker compose down`. Utiliser `docker compos
 - **Aucune alerte** : vérifier que `DISCORD_WEBHOOK_URL` n'est pas restée sur la valeur d'exemple et pointe vers le bon salon, puis vérifier `URL1` (ou `CROUS_URL`/`CROUS_URLS`).
 - **Tous les logements passent en « déjà pris »** : vérifier que la recherche CROUS renvoie bien des résultats et que le `tool_id` correspond à l'année en cours. Une page invalide est ignorée et ne met pas à jour l'état.
 - **Discord limite le débit** : le programme attend automatiquement le délai indiqué par Discord (`retry_after`) puis réessaie.
+- **CROUS injoignable** : le scan est retenté au cycle suivant et l'état est conservé. Un même échec n'est réaffiché qu'après 5 minutes pour éviter de saturer les logs. Passer `LOG_LEVEL=DEBUG` pour voir le détail des tentatives et les tracebacks.
 - **Repartir de zéro** : supprimer le fichier `STATE_DB_PATH` ou le volume Docker `app_data`.
 
 ## Évolution prévue

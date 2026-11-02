@@ -1,3 +1,4 @@
+import logging
 from copy import deepcopy
 
 from alert_crous.domain.models import Logement
@@ -333,6 +334,44 @@ def test_unexpected_notifier_exception_is_treated_as_pending():
     retry_service.run_once(["u"])
 
     assert retry_notifier.sent == ["a"]
+
+
+def test_repeated_scan_failures_are_logged_once_without_traceback(caplog):
+    caplog.set_level(logging.INFO, logger="alert_crous.services.monitor_service")
+    url = "https://example.com/tools/47/search?locationName=Lille"
+    service, _, _, _ = build_service({url: RuntimeError("connexion refusée")})
+
+    service.run_once([url])
+    service.run_once([url])
+
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.WARNING
+    ]
+    errors = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.ERROR
+    ]
+
+    assert warnings == ["Scan impossible pour Lille: connexion refusée (état conservé)"]
+    assert errors == ["Aucune URL n'a pu être scannée, état inchangé"]
+    assert all(not record.exc_info for record in caplog.records)
+
+
+def test_scan_recovery_is_logged(caplog):
+    caplog.set_level(logging.INFO, logger="alert_crous.services.monitor_service")
+    url = "https://example.com/tools/47/search?locationName=Lille"
+    scraper = FakeScraper({url: RuntimeError("connexion refusée")})
+    service = MonitorService(scraper, FakeNotifier(), FakeRepository())
+
+    service.run_once([url])
+    scraper.results[url] = [logement("a")]
+    service.run_once([url])
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert "Scan rétabli pour Lille" in messages
 
 
 def test_unexpected_mark_unavailable_exception_is_retried():

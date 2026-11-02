@@ -1,10 +1,16 @@
 import json
+import logging
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+import requests
 
 from alert_crous.adapters.scraper import crous_scraper
-from alert_crous.adapters.scraper.crous_scraper import CrousParseError, parse_logements
+from alert_crous.adapters.scraper.crous_scraper import (
+    CrousFetchError,
+    CrousParseError,
+    parse_logements,
+)
 
 
 def fetch_html_logements(url: str):
@@ -373,6 +379,50 @@ def test_fetch_logements_rejects_repeated_pagination(monkeypatch):
         fetch_html_logements(
             "https://trouverunlogement.lescrous.fr/tools/47/search"
         )
+
+
+def test_fetch_logements_does_not_fall_back_to_html_when_site_is_unreachable(monkeypatch):
+    html_calls = []
+
+    def failing_api(*args, **kwargs):
+        raise requests.ConnectionError("connection refused")
+
+    monkeypatch.setattr(crous_scraper, "_fetch_api_page", failing_api)
+    monkeypatch.setattr(
+        crous_scraper,
+        "_fetch_html",
+        lambda url: html_calls.append(url),
+    )
+
+    with pytest.raises(CrousFetchError, match="connexion refusée"):
+        crous_scraper.fetch_logements(
+            "https://trouverunlogement.lescrous.fr/tools/47/search"
+        )
+
+    assert html_calls == []
+
+
+def test_fetch_html_retries_and_raises_a_concise_error(monkeypatch, caplog):
+    class FailingSession:
+        def __init__(self):
+            self.calls = 0
+
+        def get(self, url, timeout):
+            self.calls += 1
+            raise requests.ConnectionError("connection refused")
+
+    session = FailingSession()
+    caplog.set_level(logging.WARNING, logger=crous_scraper.__name__)
+    monkeypatch.setattr(crous_scraper, "_get_session", lambda: session)
+    monkeypatch.setattr(crous_scraper.time, "sleep", lambda seconds: None)
+
+    with pytest.raises(CrousFetchError, match="connexion refusée"):
+        crous_scraper._fetch_html(
+            "https://trouverunlogement.lescrous.fr/tools/47/search"
+        )
+
+    assert session.calls == crous_scraper.MAX_RETRIES
+    assert caplog.records == []
 
 
 def test_fetch_logements_rejects_a_search_page_without_parseable_cards(monkeypatch):

@@ -6,9 +6,11 @@ from dataclasses import replace
 from ..domain.models import Logement
 from ..domain.ports import LogementRepository, Notifier, Scraper
 from ..domain.state import RepositoryState, StoredLogement
+from ..http_errors import short_error, url_label
 
 LOGGER = logging.getLogger(__name__)
 MAX_CONCURRENT_URL_FETCHES = 4
+FAILURE_LOG_INTERVAL_SECONDS = 300.0
 
 
 class MonitorService:
@@ -25,6 +27,8 @@ class MonitorService:
         self.notifier = notifier
         self.repository = repository
         self.miss_threshold = miss_threshold
+        self._failure_logs: dict[str, tuple[str, float]] = {}
+        self._all_failed_logged = False
 
     def run_once(self, urls: list[str], notify_existing: bool = True) -> list[Logement]:
         state = self.repository.load_state()
@@ -46,16 +50,21 @@ class MonitorService:
                     url = futures[future]
                     try:
                         fetched[url] = future.result()
-                    except Exception:
+                    except Exception as error:
                         failed_urls.add(url)
-                        LOGGER.exception(
-                            "Échec du scan de %s, état de cette URL conservé",
-                            url,
-                        )
+                        self._log_scan_failure(url, error)
+                    else:
+                        self._log_scan_recovery(url)
 
         if not fetched:
-            LOGGER.error("Aucune URL n'a pu être scannée, état inchangé")
+            if not self._all_failed_logged:
+                LOGGER.error("Aucune URL n'a pu être scannée, état inchangé")
+                self._all_failed_logged = True
+            else:
+                LOGGER.debug("Aucune URL n'a pu être scannée, état inchangé")
             return []
+
+        self._all_failed_logged = False
 
         now = int(time.time())
         current_ids_by_url = {
@@ -202,7 +211,35 @@ class MonitorService:
 
         return list(new_by_id.values())
 
+    def _log_scan_failure(self, url: str, error: Exception) -> None:
+        reason = short_error(error)
+        label = url_label(url)
+        now = time.monotonic()
+        previous = self._failure_logs.get(url)
+        should_log = (
+            previous is None
+            or previous[0] != reason
+            or now - previous[1] >= FAILURE_LOG_INTERVAL_SECONDS
+        )
+
+        if not should_log:
+            LOGGER.debug("Scan toujours impossible pour %s: %s", label, reason)
+            return
+
+        self._failure_logs[url] = (reason, now)
+        LOGGER.warning(
+            "Scan impossible pour %s: %s (état conservé)",
+            label,
+            reason,
+            exc_info=LOGGER.isEnabledFor(logging.DEBUG),
+        )
+
+    def _log_scan_recovery(self, url: str) -> None:
+        if self._failure_logs.pop(url, None) is not None:
+            LOGGER.info("Scan rétabli pour %s", url_label(url))
+
     def _prune_stale_urls(self, state: RepositoryState, active_urls: set[str]) -> None:
         for stale_url in set(state.url_ids) - active_urls:
-            LOGGER.info("URL retirée de la surveillance: %s", stale_url)
+            LOGGER.info("URL retirée de la surveillance: %s", url_label(stale_url))
             del state.url_ids[stale_url]
+            self._failure_logs.pop(stale_url, None)
