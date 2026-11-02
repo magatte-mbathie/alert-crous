@@ -360,6 +360,24 @@ def test_repeated_scan_failures_are_logged_once_without_traceback(caplog):
     assert all(not record.exc_info for record in caplog.records)
 
 
+def test_reason_changes_do_not_bypass_failure_log_throttling(caplog):
+    caplog.set_level(logging.INFO, logger="alert_crous.services.monitor_service")
+    url = "https://example.com/tools/47/search?locationName=Lille"
+    scraper = FakeScraper({url: RuntimeError("connexion refusée")})
+    service = MonitorService(scraper, FakeNotifier(), FakeRepository())
+
+    service.run_once([url])
+    scraper.results[url] = RuntimeError("délai dépassé")
+    service.run_once([url])
+
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.WARNING
+    ]
+    assert warnings == ["Scan impossible pour Lille: connexion refusée (état conservé)"]
+
+
 def test_scan_recovery_is_logged(caplog):
     caplog.set_level(logging.INFO, logger="alert_crous.services.monitor_service")
     url = "https://example.com/tools/47/search?locationName=Lille"

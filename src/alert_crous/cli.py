@@ -17,6 +17,7 @@ from .config import (
     validate_discord_webhook_url,
 )
 from .domain.models import Logement
+from .http_errors import url_label
 from .logging_config import configure_logging
 from .services.monitor_service import MonitorService
 
@@ -38,8 +39,12 @@ def main() -> None:
         sys.exit(1)
 
     logger.info("Démarrage de Alert CROUS")
-    logger.info("Nombre d'URLs surveillées: %s", len(CROUS_URLS))
-    logger.debug("URLs surveillées: %s", ", ".join(CROUS_URLS))
+    logger.info(
+        "URLs surveillées (%s): %s",
+        len(CROUS_URLS),
+        ", ".join(url_label(url) for url in CROUS_URLS),
+    )
+    logger.debug("URLs complètes: %s", " | ".join(CROUS_URLS))
     for url in CROUS_URLS:
         if "bounds=" not in url:
             logger.warning(

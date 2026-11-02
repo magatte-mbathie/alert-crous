@@ -218,12 +218,16 @@ class MonitorService:
         previous = self._failure_logs.get(url)
         should_log = (
             previous is None
-            or previous[0] != reason
             or now - previous[1] >= FAILURE_LOG_INTERVAL_SECONDS
         )
 
-        if not should_log:
-            LOGGER.debug("Scan toujours impossible pour %s: %s", label, reason)
+        if previous is not None and not should_log:
+            LOGGER.debug(
+                "Scan toujours impossible pour %s: %s (motif précédent: %s)",
+                label,
+                reason,
+                previous[0],
+            )
             return
 
         self._failure_logs[url] = (reason, now)
