@@ -39,6 +39,14 @@ def main() -> None:
 
     logger.info("Démarrage de Alert CROUS")
     logger.info("Nombre d'URLs surveillées: %s", len(CROUS_URLS))
+    logger.debug("URLs surveillées: %s", ", ".join(CROUS_URLS))
+    for url in CROUS_URLS:
+        if "bounds=" not in url:
+            logger.warning(
+                "L'URL CROUS ne contient pas de bounds : elle surveille tout le "
+                "territoire au lieu d'une ville précise (%s)",
+                url,
+            )
     logger.info("Intervalle: %ss", CHECK_INTERVAL)
     logger.info("Base d'état: %s", STATE_DB_PATH)
 
@@ -65,8 +73,9 @@ def main() -> None:
 
             next_run += CHECK_INTERVAL
             now = time.monotonic()
-            if next_run <= now:
-                next_run = now + CHECK_INTERVAL
-            time.sleep(next_run - now)
+            if next_run < now:
+                next_run = now
+            if next_run > now:
+                time.sleep(next_run - now)
     except KeyboardInterrupt:
         logger.info("Arrêt demandé")

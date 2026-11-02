@@ -24,9 +24,11 @@ DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/TON_ID/TON_TOKEN
 Tu peux garder les autres variables existantes :
 
 ```env
-CROUS_URL=https://trouverunlogement.lescrous.fr/tools/47/search?bounds=3.038331354660928_50.67241880971674_3.1800994453390725_50.58248679028326&locationName=Hellemmes-Lille+%2859260%29
-# Intervalle entre deux scans (secondes)
-CHECK_INTERVAL=5
+# Une variable par ville / recherche
+URL1=https://trouverunlogement.lescrous.fr/tools/47/search?bounds=3.038331354660928_50.67241880971674_3.1800994453390725_50.58248679028326&locationName=Hellemmes-Lille+%2859260%29
+# URL2=https://trouverunlogement.lescrous.fr/tools/47/search?bounds=...&locationName=Paris
+# Intervalle entre deux scans (secondes, décimal accepté)
+CHECK_INTERVAL=3
 ```
 
 ## 3. Vérifier
@@ -42,7 +44,7 @@ Si aucune notification n’arrive, vérifie :
 1. que l’URL du webhook est complète,
 2. que le webhook pointe bien vers le bon salon,
 3. que le bot a été relancé après modification du `.env`,
-4. que `CROUS_URL` ne contient pas encore la valeur d’exemple `bounds=...`.
+4. qu’au moins `URL1` (ou `CROUS_URL`/`CROUS_URLS`) est défini et ne contient pas encore la valeur d’exemple `bounds=...`.
 
 Les notifications envoyées restent conservées dans Discord même si le logement
 devient ensuite indisponible sur le site CROUS.

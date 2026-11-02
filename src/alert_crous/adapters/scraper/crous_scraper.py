@@ -1,8 +1,11 @@
 import json
 import logging
 import re
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import parse_qsl, quote, urlencode, urljoin, urlsplit, urlunsplit
 
 import requests
@@ -18,14 +21,28 @@ TYPE_PATTERN = re.compile(
 )
 MAX_RETRIES = 3
 MAX_PAGES = 50
+MAX_CONCURRENT_PAGE_FETCHES = 4
+API_PAGE_SIZE = 100
+API_TIMEOUT = (5, 20)
 REQUEST_TIMEOUT = 30
 
-SESSION = requests.Session()
-SESSION.headers.update(
-    {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    }
-)
+_SESSION_LOCAL = threading.local()
+
+
+def _get_session() -> requests.Session:
+    session = getattr(_SESSION_LOCAL, "session", None)
+    if session is None:
+        session = requests.Session()
+        session.headers.update(
+            {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36"
+                ),
+            }
+        )
+        _SESSION_LOCAL.session = session
+    return session
 
 
 class CrousParseError(RuntimeError):
@@ -41,7 +58,160 @@ class SearchMetadata:
     items_count: int | None = None
 
 
-def fetch_logements(url: str) -> list[Logement]:
+def fetch_logements(url: str, use_api: bool = True) -> list[Logement]:
+    """Récupère les logements, via l'API JSON puis en secours via le HTML."""
+    if use_api:
+        try:
+            return _fetch_logements_via_api(url)
+        except Exception as error:
+            LOGGER.warning(
+                "API JSON CROUS indisponible pour %s, retour au HTML: %s",
+                url,
+                error,
+            )
+
+    return _fetch_logements_via_html(url)
+
+
+def _fetch_logements_via_api(url: str) -> list[Logement]:
+    tool_id = _tool_id_from_url(url)
+    if tool_id is None:
+        raise CrousParseError(f"tool_id CROUS introuvable dans l'URL: {url}")
+
+    page_size = API_PAGE_SIZE
+    first_page = _fetch_api_page(url, 0, page_size)
+    first_items = first_page.get("items")
+    if not isinstance(first_items, list):
+        raise CrousParseError(f"Réponse API CROUS sans liste d'items pour {url}")
+    _ensure_json_items_have_ids(first_items)
+
+    total = _total_value(first_page)
+    reported_page_size = _as_int(first_page.get("pageSize")) or page_size
+    actual_page_size = max(1, reported_page_size)
+    if (
+        first_items
+        and total is not None
+        and total > len(first_items)
+        and len(first_items) < actual_page_size
+    ):
+        actual_page_size = len(first_items)
+    if total is not None and total <= len(first_items):
+        actual_page_size = max(actual_page_size, total, 1)
+
+    seen_offsets: set[int] = set()
+    seen_ids: set[str] = set()
+    all_logements: list[Logement] = []
+    processed_items = 0
+
+    def process_page(page_results: dict, expected_offset: int) -> tuple[int, int]:
+        nonlocal total, processed_items
+
+        page_offset = _as_int(page_results.get("page"))
+        if page_offset is not None:
+            if page_offset != expected_offset:
+                raise CrousParseError(
+                    "Pagination API incohérente pour "
+                    f"{url}: offset {page_offset} au lieu de {expected_offset}"
+                )
+            if page_offset in seen_offsets:
+                raise CrousParseError(
+                    f"Pagination API répétée pour {url}: offset {page_offset}"
+                )
+            seen_offsets.add(page_offset)
+
+        page_total = _total_value(page_results)
+        if page_total is not None:
+            total = page_total
+
+        items = page_results.get("items")
+        if not isinstance(items, list):
+            raise CrousParseError(f"Réponse API CROUS sans items pour {url}")
+        _ensure_json_items_have_ids(items)
+
+        new_count = 0
+        for logement in _parse_json_items(page_results, tool_id):
+            if logement.id in seen_ids:
+                continue
+            seen_ids.add(logement.id)
+            all_logements.append(logement)
+            new_count += 1
+
+        processed_items += len(items)
+        return len(items), new_count
+
+    page_items_count, _ = process_page(first_page, 0)
+
+    if total is None:
+        offset = actual_page_size
+        while page_items_count and len(seen_offsets) < MAX_PAGES:
+            page_results = _fetch_api_page(url, offset, page_size)
+            page_items_count, new_count = process_page(page_results, offset)
+            offset += actual_page_size
+            if page_items_count == 0 or new_count == 0:
+                break
+        else:
+            if page_items_count:
+                raise CrousParseError(
+                    f"Limite de {MAX_PAGES} pages atteinte pour {url}"
+                )
+
+        if total is not None and processed_items < total:
+            raise CrousParseError(
+                f"Résultats incomplets pour {url}: "
+                f"{processed_items}/{total} éléments traités"
+            )
+        LOGGER.debug(
+            "%s logement(s) trouvé(s) via API pour %s",
+            len(all_logements),
+            url,
+        )
+        return all_logements
+
+    if total <= 0:
+        return all_logements
+
+    expected_pages = (total + actual_page_size - 1) // actual_page_size
+    if expected_pages > MAX_PAGES:
+        raise CrousParseError(
+            f"Nombre de pages API trop élevé pour {url}: {expected_pages}"
+        )
+
+    offsets = [index * actual_page_size for index in range(1, expected_pages)]
+    if offsets:
+        max_workers = min(MAX_CONCURRENT_PAGE_FETCHES, len(offsets))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            pages = list(
+                executor.map(
+                    lambda offset: _fetch_api_page(url, offset, page_size),
+                    offsets,
+                )
+            )
+        for offset, page_results in zip(offsets, pages):
+            process_page(page_results, offset)
+
+    next_offset = expected_pages * actual_page_size
+    while processed_items < total and len(seen_offsets) < MAX_PAGES:
+        page_results = _fetch_api_page(url, next_offset, page_size)
+        page_items_count, new_count = process_page(page_results, next_offset)
+        next_offset += actual_page_size
+        if page_items_count == 0 or new_count == 0:
+            break
+
+    if processed_items < total:
+        raise CrousParseError(
+            f"Résultats incomplets pour {url}: "
+            f"{processed_items}/{total} éléments traités"
+        )
+
+    LOGGER.debug(
+        "%s logement(s) trouvé(s) via API pour %s",
+        len(all_logements),
+        url,
+    )
+    return all_logements
+
+
+def _fetch_logements_via_html(url: str) -> list[Logement]:
     LOGGER.debug("Vérification de la page CROUS: %s", url)
     all_logements: list[Logement] = []
     seen_ids: set[str] = set()
@@ -94,6 +264,102 @@ def fetch_logements(url: str) -> list[Logement]:
     return all_logements
 
 
+def _fetch_api_page(url: str, page_offset: int, page_size: int) -> dict:
+    tool_id = _tool_id_from_url(url)
+    if tool_id is None:
+        raise CrousParseError(f"tool_id CROUS introuvable dans l'URL: {url}")
+
+    body = _build_api_search_body(url, page_offset, page_size)
+    response = _get_session().post(
+        f"{BASE_URL}/api/fr/search/{tool_id}",
+        json=body,
+        headers={"Accept": "application/json"},
+        timeout=API_TIMEOUT,
+    )
+    response.raise_for_status()
+
+    try:
+        data = response.json()
+    except ValueError as error:
+        raise CrousParseError("Réponse API CROUS non JSON") from error
+
+    if not isinstance(data, dict):
+        raise CrousParseError("Réponse API CROUS invalide")
+    results = data.get("results")
+    if not isinstance(results, dict):
+        errors = data.get("errors")
+        raise CrousParseError(f"Réponse API CROUS invalide: {errors or data}")
+    return results
+
+
+def _build_api_search_body(
+    url: str,
+    page_offset: int,
+    page_size: int,
+) -> dict[str, Any]:
+    query: dict[str, list[str]] = {}
+    for key, value in parse_qsl(urlsplit(url).query, keep_blank_values=True):
+        query.setdefault(key, []).append(value)
+
+    body: dict[str, Any] = {
+        "idTool": _tool_id_from_url(url),
+        "page": page_offset,
+        "pageSize": page_size,
+    }
+
+    bounds_values = query.get("bounds")
+    if bounds_values:
+        bounds = _parse_bounds(bounds_values[-1])
+        if bounds is None:
+            raise CrousParseError(
+                f"Paramètre bounds invalide: {bounds_values[-1]}"
+            )
+        body["location"] = bounds
+
+    max_price = _to_float(_last_value(query.get("maxPrice")))
+    if max_price is not None:
+        body["price"] = {"max": int(round(max_price * 100))}
+
+    min_area = _to_float(_last_value(query.get("minArea")))
+    if min_area is not None:
+        body["area"] = {"min": min_area}
+
+    occupation_modes = query.get("occupationModes")
+    if occupation_modes:
+        body["occupationModes"] = occupation_modes
+
+    equipments = query.get("equipments")
+    if equipments:
+        body["equipments"] = equipments
+
+    if "prm" in query.get("accessibility", []):
+        body["adaptedPmr"] = True
+
+    residence = _last_value(query.get("residenceId"))
+    if residence:
+        body["residence"] = residence
+
+    return body
+
+
+def _parse_bounds(raw: str) -> list[dict[str, float]] | None:
+    parts = raw.split("_")
+    if len(parts) != 4:
+        return None
+    try:
+        west, north, east, south = (float(part) for part in parts)
+    except ValueError:
+        return None
+    return [
+        {"lon": west, "lat": north},
+        {"lon": east, "lat": south},
+    ]
+
+
+def _last_value(values: list[str] | None) -> str | None:
+    return values[-1] if values else None
+
+
 def parse_logements(html: str, tool_id: int | None = None) -> list[Logement]:
     """Parse une page de résultats, avec fallback sur l'ancien parsing HTML."""
     try:
@@ -117,13 +383,11 @@ def parse_search_page(
             or _tool_id_from_data_url(data_url)
             or _tool_id_from_html(html)
         )
-        total_data = results.get("total")
-        total = (
-            total_data.get("value") if isinstance(total_data, dict) else total_data
-        )
         items = results.get("items")
+        if isinstance(items, list):
+            _ensure_json_items_have_ids(items)
         metadata = SearchMetadata(
-            total=_as_int(total),
+            total=_total_value(results),
             page=_as_int(results.get("page")),
             page_size=_as_int(results.get("pageSize")),
             tool_id=resolved_tool_id,
@@ -150,7 +414,7 @@ def _fetch_html(url: str) -> str:
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            response = SESSION.get(url, timeout=REQUEST_TIMEOUT)
+            response = _get_session().get(url, timeout=REQUEST_TIMEOUT)
             response.raise_for_status()
             response.encoding = response.apparent_encoding or response.encoding
             return response.text
@@ -476,6 +740,27 @@ def _as_int(value) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _total_value(results: dict) -> int | None:
+    total = results.get("total")
+    if isinstance(total, dict):
+        total = total.get("value")
+    return _as_int(total)
+
+
+def _ensure_json_items_have_ids(items: list) -> None:
+    dict_items = [item for item in items if isinstance(item, dict)]
+    if items and (
+        not dict_items or not any(item.get("id") is not None for item in dict_items)
+    ):
+        raise CrousParseError(
+            "Les items JSON CROUS ne contiennent aucun identifiant exploitable"
+        )
+    if dict_items and not any("available" in item for item in dict_items):
+        raise CrousParseError(
+            "Les items JSON CROUS ne contiennent aucun champ de disponibilité"
+        )
 
 
 def _tool_id_from_url(url: str | None) -> int | None:

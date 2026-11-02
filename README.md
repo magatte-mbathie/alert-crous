@@ -57,23 +57,35 @@ Le fichier `.env` reste local et ne doit pas être versionné. Le dépôt contie
 
 ```env
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/TON_ID/TON_TOKEN
-CROUS_URL=https://trouverunlogement.lescrous.fr/tools/47/search?bounds=...
-# Optionnel : plusieurs URL séparées par des virgules
-# CROUS_URLS=https://...Nancy...,https://...Lille...
-CHECK_INTERVAL=5
+
+# Une variable par ville / recherche
+URL1=https://trouverunlogement.lescrous.fr/tools/47/search?bounds=...&locationName=Lille
+URL2=https://trouverunlogement.lescrous.fr/tools/47/search?bounds=...&locationName=Paris
+# URL3=...
+
+# Anciennes variables encore supportées
+# CROUS_URL=https://trouverunlogement.lescrous.fr/tools/47/search?bounds=...
+# CROUS_URLS=https://...Lille...,https://...Paris...
+
+CHECK_INTERVAL=3
 MISS_THRESHOLD=2
 LOG_LEVEL=INFO
 NOTIFY_EXISTING_ON_STARTUP=true
 # STATE_DB_PATH=data/alert_crous.sqlite3
 ```
 
-- `CROUS_URL` / `CROUS_URLS` : une ou plusieurs recherches CROUS. Le `tool_id` (`47` ici) dépend de l'année universitaire et doit être mis à jour à chaque nouvelle campagne.
-- `CHECK_INTERVAL` : intervalle minimal entre deux scans, en secondes. Le temps de réponse CROUS et Discord s'ajoute au scan ; la latence réelle peut donc dépasser cette valeur.
+- `URL1`, `URL2`, `URL3`, ... : une variable par ville ou par recherche. Elles sont lues dans l'ordre numérique (la casse est libre : `URL1` ou `url1`). Le plus simple est de copier l'URL complète depuis le site CROUS après avoir choisi la ville : c'est le paramètre `bounds` qui délimite la zone géographique ; `locationName` n'est qu'un libellé.
+- `CROUS_URL` / `CROUS_URLS` : anciennes syntaxes, toujours supportées (une URL unique, ou plusieurs URL séparées par des virgules). Si au moins une variable `URL1`, `URL2`, ... est définie, elle prend le dessus sur ces anciennes variables. Il faut définir au moins `URL1` ou `CROUS_URL`/`CROUS_URLS`.
+- `CHECK_INTERVAL` : intervalle entre deux scans, en secondes. Accepte les nombres décimaux et vaut `3` par défaut (minimum `1`). Le scan est parallélisé et utilise l'API JSON du site quand elle est disponible, donc la latence réelle reste proche de cette valeur.
 - `MISS_THRESHOLD` : nombre de scans consécutifs sans un logement avant de le marquer « déjà pris ». La valeur `2` évite les faux positifs liés à une page transitoirement vide.
 - `STATE_DB_PATH` : base SQLite qui conserve les logements vus, les IDs de messages Discord et l'état par URL. Par défaut : `data/alert_crous.sqlite3`.
 - `NOTIFY_EXISTING_ON_STARTUP` : utilisé uniquement au tout premier démarrage, quand la base d'état est vide. `true` notifie les logements déjà présents ; `false` les marque comme vus sans notification. Les redémarrages suivants ne renotifient pas les logements déjà connus.
 
 Le site CROUS ne fournit pas de webhook d'actualisation. Les nouveaux logements sont détectés au prochain scan. Toutes les pages de résultats sont parcourues, pas seulement la première.
+
+Pour accélérer la détection, le scraper interroge d'abord l'API JSON interne du site (`POST /api/fr/search/{tool_id}`), avec une pagination plus grande et les pages restantes récupérées en parallèle. Si cette API change ou échoue, il retombe automatiquement sur le parsing HTML classique. Les différentes villes sont également scannées en parallèle.
+
+Le `tool_id` (`47` ici) dépend de l'année universitaire et doit être mis à jour à chaque nouvelle campagne. Pensez aussi à vérifier que les `bounds` correspondent toujours à la ville recherchée.
 
 Lorsqu'un logement disparaît pendant `MISS_THRESHOLD` scans consécutifs, sa notification est conservée puis éditée en rouge avec la mention « déjà pris ». Si le logement réapparaît plus tard, une nouvelle alerte est envoyée.
 
@@ -114,7 +126,7 @@ Le volume n'est pas supprimé par `docker compose down`. Utiliser `docker compos
 
 ## Dépannage
 
-- **Aucune alerte** : vérifier que `DISCORD_WEBHOOK_URL` n'est pas restée sur la valeur d'exemple et pointe vers le bon salon, puis vérifier `CROUS_URL`.
+- **Aucune alerte** : vérifier que `DISCORD_WEBHOOK_URL` n'est pas restée sur la valeur d'exemple et pointe vers le bon salon, puis vérifier `URL1` (ou `CROUS_URL`/`CROUS_URLS`).
 - **Tous les logements passent en « déjà pris »** : vérifier que la recherche CROUS renvoie bien des résultats et que le `tool_id` correspond à l'année en cours. Une page invalide est ignorée et ne met pas à jour l'état.
 - **Discord limite le débit** : le programme attend automatiquement le délai indiqué par Discord (`retry_after`) puis réessaie.
 - **Repartir de zéro** : supprimer le fichier `STATE_DB_PATH` ou le volume Docker `app_data`.

@@ -7,6 +7,10 @@ from alert_crous.adapters.scraper import crous_scraper
 from alert_crous.adapters.scraper.crous_scraper import CrousParseError, parse_logements
 
 
+def fetch_html_logements(url: str):
+    return crous_scraper.fetch_logements(url, use_api=False)
+
+
 def test_parse_logements_deduplicates_by_id():
     html = """
     <div class="fr-card">
@@ -79,6 +83,15 @@ def json_item(
             {"type": "alone", "rent": {"min": rent, "max": rent}},
         ],
         "medias": [{"src": f"{logement_id}/photo.jpg"}],
+    }
+
+
+def api_results(items: list[dict], total: int, page: int = 0, page_size: int = 2) -> dict:
+    return {
+        "total": {"value": total, "relation": "eq"},
+        "page": page,
+        "pageSize": page_size,
+        "items": items,
     }
 
 
@@ -160,12 +173,122 @@ def test_fetch_logements_follows_pagination(monkeypatch):
 
     monkeypatch.setattr(crous_scraper, "_fetch_html", fake_fetch)
 
-    logements = crous_scraper.fetch_logements(
+    logements = fetch_html_logements(
         "https://trouverunlogement.lescrous.fr/tools/47/search"
     )
 
     assert [logement.id for logement in logements] == ["1", "2", "3"]
     assert requested_pages == [1, 2]
+
+
+def test_fetch_logements_uses_api_and_paginates(monkeypatch):
+    requested_offsets = []
+
+    def fake_api(url, offset, page_size):
+        requested_offsets.append(offset)
+        if offset == 0:
+            return api_results([json_item(1), json_item(2)], total=3, page=0)
+        if offset == 2:
+            return api_results([json_item(3)], total=3, page=2)
+        raise AssertionError(f"offset inattendu: {offset}")
+
+    monkeypatch.setattr(crous_scraper, "API_PAGE_SIZE", 2)
+    monkeypatch.setattr(crous_scraper, "_fetch_api_page", fake_api)
+
+    logements = crous_scraper.fetch_logements(
+        "https://trouverunlogement.lescrous.fr/tools/47/search"
+    )
+
+    assert [logement.id for logement in logements] == ["1", "2", "3"]
+    assert requested_offsets == [0, 2]
+
+
+def test_fetch_logements_accepts_a_valid_empty_api_search(monkeypatch):
+    monkeypatch.setattr(
+        crous_scraper,
+        "_fetch_api_page",
+        lambda url, offset, page_size: api_results([], total=0, page=0),
+    )
+
+    logements = crous_scraper.fetch_logements(
+        "https://trouverunlogement.lescrous.fr/tools/47/search"
+    )
+
+    assert logements == []
+
+
+def test_fetch_logements_falls_back_to_html_when_api_fails(monkeypatch):
+    def failing_api(*args, **kwargs):
+        raise RuntimeError("API indisponible")
+
+    monkeypatch.setattr(crous_scraper, "_fetch_api_page", failing_api)
+    monkeypatch.setattr(
+        crous_scraper,
+        "_fetch_html",
+        lambda url: json_page([json_item(1)], total=1),
+    )
+
+    logements = crous_scraper.fetch_logements(
+        "https://trouverunlogement.lescrous.fr/tools/47/search"
+    )
+
+    assert [logement.id for logement in logements] == ["1"]
+
+
+def test_build_api_search_body_translates_url_filters():
+    body = crous_scraper._build_api_search_body(
+        "https://trouverunlogement.lescrous.fr/tools/47/search"
+        "?bounds=1_2_3_4&maxPrice=500&minArea=10"
+        "&occupationModes=alone&occupationModes=couple"
+        "&equipments=wifi&accessibility=prm&residenceId=42",
+        page_offset=20,
+        page_size=100,
+    )
+
+    assert body["idTool"] == 47
+    assert body["page"] == 20
+    assert body["pageSize"] == 100
+    assert body["location"] == [
+        {"lon": 1.0, "lat": 2.0},
+        {"lon": 3.0, "lat": 4.0},
+    ]
+    assert body["price"] == {"max": 50000}
+    assert body["area"] == {"min": 10.0}
+    assert body["occupationModes"] == ["alone", "couple"]
+    assert body["equipments"] == ["wifi"]
+    assert body["adaptedPmr"] is True
+    assert body["residence"] == "42"
+
+
+def test_api_rejects_items_without_ids(monkeypatch):
+    def fake_api(url, offset, page_size):
+        return api_results([{"available": True}], total=1, page=0)
+
+    monkeypatch.setattr(crous_scraper, "_fetch_api_page", fake_api)
+
+    with pytest.raises(CrousParseError, match="identifiant"):
+        crous_scraper._fetch_logements_via_api(
+            "https://trouverunlogement.lescrous.fr/tools/47/search"
+        )
+
+
+def test_api_rejects_items_without_availability(monkeypatch):
+    def fake_api(url, offset, page_size):
+        return api_results([{"id": 1}], total=1, page=0)
+
+    monkeypatch.setattr(crous_scraper, "_fetch_api_page", fake_api)
+
+    with pytest.raises(CrousParseError, match="disponibilité"):
+        crous_scraper._fetch_logements_via_api(
+            "https://trouverunlogement.lescrous.fr/tools/47/search"
+        )
+
+
+def test_parse_search_page_rejects_json_items_without_ids():
+    html = json_page([{"available": True}], total=1)
+
+    with pytest.raises(CrousParseError, match="identifiant"):
+        crous_scraper.parse_search_page(html)
 
 
 def test_fetch_logements_raises_on_incomplete_results(monkeypatch):
@@ -178,7 +301,7 @@ def test_fetch_logements_raises_on_incomplete_results(monkeypatch):
     monkeypatch.setattr(crous_scraper, "_fetch_html", fake_fetch)
 
     with pytest.raises(CrousParseError, match="incomplets"):
-        crous_scraper.fetch_logements("https://trouverunlogement.lescrous.fr/tools/47/search")
+        fetch_html_logements("https://trouverunlogement.lescrous.fr/tools/47/search")
 
 
 def test_fetch_logements_accepts_a_valid_empty_search(monkeypatch):
@@ -188,7 +311,7 @@ def test_fetch_logements_accepts_a_valid_empty_search(monkeypatch):
         lambda url: json_page([], total=0),
     )
 
-    assert crous_scraper.fetch_logements(
+    assert fetch_html_logements(
         "https://trouverunlogement.lescrous.fr/tools/47/search"
     ) == []
 
@@ -201,7 +324,7 @@ def test_fetch_logements_rejects_an_unrecognized_page(monkeypatch):
     )
 
     with pytest.raises(CrousParseError):
-        crous_scraper.fetch_logements("https://trouverunlogement.lescrous.fr/tools/47/search")
+        fetch_html_logements("https://trouverunlogement.lescrous.fr/tools/47/search")
 
 
 def test_parse_search_page_encodes_media_urls_with_spaces():
@@ -228,7 +351,7 @@ def test_fetch_logements_paginates_when_a_page_contains_unavailable_items(monkey
 
     monkeypatch.setattr(crous_scraper, "_fetch_html", fake_fetch)
 
-    logements = crous_scraper.fetch_logements(
+    logements = fetch_html_logements(
         "https://trouverunlogement.lescrous.fr/tools/47/search"
     )
 
@@ -247,7 +370,7 @@ def test_fetch_logements_rejects_repeated_pagination(monkeypatch):
     monkeypatch.setattr(crous_scraper, "_fetch_html", fake_fetch)
 
     with pytest.raises(CrousParseError, match="Pagination répétée"):
-        crous_scraper.fetch_logements(
+        fetch_html_logements(
             "https://trouverunlogement.lescrous.fr/tools/47/search"
         )
 
@@ -260,6 +383,6 @@ def test_fetch_logements_rejects_a_search_page_without_parseable_cards(monkeypat
     )
 
     with pytest.raises(CrousParseError, match="aucun logement"):
-        crous_scraper.fetch_logements(
+        fetch_html_logements(
             "https://trouverunlogement.lescrous.fr/tools/47/search"
         )

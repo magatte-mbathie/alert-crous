@@ -1,5 +1,6 @@
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 
 from ..domain.models import Logement
@@ -7,6 +8,7 @@ from ..domain.ports import LogementRepository, Notifier, Scraper
 from ..domain.state import RepositoryState, StoredLogement
 
 LOGGER = logging.getLogger(__name__)
+MAX_CONCURRENT_URL_FETCHES = 4
 
 
 class MonitorService:
@@ -33,12 +35,23 @@ class MonitorService:
         fetched: dict[str, list[Logement]] = {}
         failed_urls: set[str] = set()
 
-        for url in urls:
-            try:
-                fetched[url] = self.scraper.fetch_logements(url)
-            except Exception:
-                failed_urls.add(url)
-                LOGGER.exception("Échec du scan de %s, état de cette URL conservé", url)
+        if urls:
+            max_workers = min(MAX_CONCURRENT_URL_FETCHES, len(urls))
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(self.scraper.fetch_logements, url): url
+                    for url in urls
+                }
+                for future in as_completed(futures):
+                    url = futures[future]
+                    try:
+                        fetched[url] = future.result()
+                    except Exception:
+                        failed_urls.add(url)
+                        LOGGER.exception(
+                            "Échec du scan de %s, état de cette URL conservé",
+                            url,
+                        )
 
         if not fetched:
             LOGGER.error("Aucune URL n'a pu être scannée, état inchangé")
